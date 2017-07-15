@@ -1,34 +1,57 @@
-pragma solidity ^0.4.10;
+pragma solidity ^0.4.13;
 import "github.com/oraclize/ethereum-api/oraclizeAPI.sol";
 
 contract CMCEthereumTicker is usingOraclize {
     
-    address parent;
-    
     uint centsPerETH;
-    bool cleanUpOn = false;
+    bool enabled;
+    
+    address parent;
+    address manager;
+    
+    modifier onlyParentOrManager() { require(msg.sender == parent || msg.sender == manager); _; }
     
     event newOraclizeQuery(string description);
     event newPriceTicker(string price);
     
     
-    function CMCEthereumTicker() {
+    function CMCEthereumTicker(address _manager) {
+        oraclize_setProof(proofType_NONE);
+        enabled = false;
         parent = msg.sender;
-        update();
+        manager = _manager;
     }
     
-    function getCentsPerETH() constant returns(uint centsPerETH) {
+    function getCentsPerETH() constant returns(uint) {
         return centsPerETH;
     }
     
-    function __callback(bytes32 myid, string result, bytes proof) {
-        if (msg.sender != oraclize_cbAddress()) throw;
-        if (cleanUpOn) {
-            selfdestruct(parent);
-        }
+    function getEnabled() constant returns(bool) {
+        return enabled;
+    }
+    
+    function enable() 
+        onlyParentOrManager
+    {
+        require(enabled == false);
+        enabled = true;
+        update();
+    }
+    
+    function disable() 
+        onlyParentOrManager
+    {
+        require(enabled == true);
+        enabled = false;
+    }
+    
+    function __callback(bytes32 myid, string result) {
+        if (msg.sender != oraclize_cbAddress()) revert();
         centsPerETH = parseInt(result, 2);
         newPriceTicker(result);
-        update();
+        if (enabled) {
+           update(); 
+        }
     }
     
     function update() payable {
@@ -40,21 +63,23 @@ contract CMCEthereumTicker is usingOraclize {
         }
     }
     
-    function initiateCleanUp() {
-        assert(msg.sender == parent);
-        cleanUpOn = true;
+    function payToManager(uint _amount) 
+        onlyParentOrManager
+    {
+        if(!parent.send(_amount * (1 ether/1 wei))) revert();
     }
+    
+    function () payable {}
+    
 }
 
 contract PresaleToken {
 
 
-    function PresaleToken(address _tokenManager, uint _limitUSD, uint _priceUSD) {
-        tokenManager = _tokenManager;
-        priceTicker = new CMCEthereumTicker();
-        if(!priceTicker.send(this.balance)) throw;
+    function PresaleToken(uint _limitUSD, uint _priceUSD) {
+        tokenManager = msg.sender;
         priceUSD = _priceUSD;
-        maxSupply = _limitUSD/_priceUSD * 10**decimals;
+        maxSupply = _limitUSD/_priceUSD * uint(10)**decimals;
     }
     
     enum Phase {
@@ -66,15 +91,15 @@ contract PresaleToken {
         Migrated
     }
     
+    // maximum token supply
     uint public maxSupply;
+    // price if 1 token in USD
     uint public priceUSD;
+    // Ticker contract
     CMCEthereumTicker priceTicker;
-    uint lastCentsPerETH = 0;
+
     
-    string public constant name = "Dolphin BI Presale Token";
-    string public constant symbol = "DBIP";
-    uint8 public constant decimals = 8;
-    
+    //Phase on contract creation
     Phase public currentPhase = Phase.Created;
 
     // amount of tokens already sold
@@ -83,49 +108,112 @@ contract PresaleToken {
     // Token manager has exclusive priveleges to call administrative
     // functions on this contract.
     address public tokenManager;
-    // Crowdsale manager has exclusive priveleges to burn presale tokens.
-    address public crowdsaleManager;
+    // Migration manager has privileges to burn tokens during migration.
+    address public migrationManager;
     
     // The last buyer is the buyer that purchased
     // tokens that add up to the maxSupply or more.
     // During the presale finalization they are refunded
-    // the excess ether.
-    address private lastBuyer;
-    uint256 private refundValue;
+    // the excess USD according to lastCentsPerETH.
+    address lastBuyer;
+    uint refundValue;
+    uint lastCentsPerETH = 0;
     
+    //ERC 20 Containers
     mapping (address => uint256) private balance;
     mapping (address => mapping(address => uint256)) private allowed;
+    
+    //ERC 20 Additional info
+    string public constant name = "Dolphin Presale Token";
+    string public constant symbol = "DBIP";
+    uint8 public constant decimals = 18;
 
-    //external access modifiers
-    modifier onlyTokenManager()     { if(msg.sender != tokenManager) throw; _; }
-    modifier onlyCrowdsaleManager() { if(msg.sender != crowdsaleManager) throw; _; }
+    //External access modifiers
+    modifier onlyTokenManager()     { require(msg.sender == tokenManager); _; }
+    modifier onlyMigrationManager() { require(msg.sender == migrationManager); _; }
     //Presale phase modifiers
-    modifier onlyWhileCreated() {if(currentPhase != Phase.Created) throw; _;}
-    modifier onlyWhileRunning() {if(currentPhase != Phase.Running) throw; _;}
-    modifier onlyWhileFinished() {if(currentPhase != Phase.Finished) throw; _;}
-    modifier onlyWhileFinalized() {if(currentPhase != Phase.Finalized) throw; _;}
-    modifier onlyWhileMigrating() {if(currentPhase != Phase.Migrating) throw; _;}
+    modifier onlyWhileCreated() {assert(currentPhase == Phase.Created); _;}
+    modifier onlyWhileRunning() {assert(currentPhase == Phase.Running); _;}
+    modifier onlyWhileFinished() {assert(currentPhase == Phase.Finished); _;}
+    modifier onlyWhileFinalized() {assert(currentPhase == Phase.Finalized); _;}
+    modifier onlyBeforeMigration() {assert(currentPhase != Phase.Migrating && currentPhase != Phase.Migrated); _;}
+    modifier onlyWhileMigrating() {assert(currentPhase == Phase.Migrating); _;}
 
     
 
     event LogBuy(address indexed owner, uint value);
-    event LogBurn(address indexed owner, uint value);
+    event LogMigrate(address indexed owner, uint value);
     event LogPhaseSwitch(Phase newPhase);
     event Transfer(address indexed _from, address indexed _to, uint256 _value);
     event Approval(address indexed _owner, address indexed _spender, uint256 _value);
 
 
     
-    //if it is fallback, it shouldn't have enough gas?
     function() payable {
         buyTokens(msg.sender);
     }
+    
 
-    function buyTokens(address _buyer) public payable
+    ///ERC20 Interface functions
+    
+    function balanceOf(address _owner) constant returns (uint256 balanceOf) {
+        return balance[_owner];
+    }
+    
+    function totalSupply() constant returns (uint256 totalSupply) {
+        return supply;
+    }
+    
+    function allowance(address _owner, address _spender) constant returns (uint256 remaining) {
+        return allowed[_owner][_spender];
+    }
+
+    function transfer(address _to, uint256 _value) onlyBeforeMigration returns (bool success) 
+    {
+        if (balance[msg.sender] >= _value && _value > 0) {
+            balance[msg.sender] -= _value;
+            balance[_to] += _value;
+            Transfer(msg.sender,_to,_value);
+            return true;
+        }
+        return false;
+    }
+    
+    function approve(address _spender, uint256 _value) onlyBeforeMigration returns (bool success) {
+        if (balance[msg.sender] >= _value && _value > 0) {
+            allowed[msg.sender][_spender] = _value;
+            Approval(msg.sender,_spender,_value);
+            return true;
+        }
+        return false;
+    }
+    
+    
+    function transferFrom(address _from, address _to, uint256 _value) onlyBeforeMigration returns (bool success) {
+        
+        if (allowed[_from][msg.sender] >= _value && balance[_from] >= _value && _value >= 0) 
+        {
+            allowed[_from][msg.sender] -= _value;
+            balance[_from] -= _value;
+            balance[_to] += _value;
+            Transfer(_from,_to,_value);
+            return true;
+        }
+        
+        return false;
+    }
+
+    ///Presale-specific functions
+
+    function buyTokens(address _buyer) payable
         onlyWhileRunning
     {
-        if(msg.value == 0) throw;
-        uint newTokens = msg.value * priceTicker.getCentsPerETH() * 10**decimals / (priceUSD * 100);
+        require(msg.value != 0);
+        require(priceTicker.getEnabled());
+        require(priceTicker.getCentsPerETH() != 0);
+        var newTokens = msg.value * getCentsPerETH() * uint(10)**decimals  / (priceUSD * 100 * (1 ether / 1 wei));
+        assert(newTokens != 0);
+        
         if (supply + newTokens > maxSupply) {
             var remainder = maxSupply - supply;
             balance[_buyer] += remainder;
@@ -141,112 +229,63 @@ contract PresaleToken {
         }
         
         if (supply == maxSupply) {
-            lastCentsPerETH = priceTicker.getCentsPerETH();
-            priceTicker.initiateCleanUp();
+            lastCentsPerETH = getCentsPerETH();
             currentPhase = Phase.Finished;
             LogPhaseSwitch(Phase.Finished);
         }
     }
 
-    function burnTokens(address _owner) public
-        onlyCrowdsaleManager
+    function migrateTokens(address _owner)
+        onlyMigrationManager
         onlyWhileMigrating
     {
-        uint tokens = balance[_owner];
-        if(tokens == 0) throw;
+        assert(balance[_owner] != 0);
+        var migratedValue = balance[_owner];
+        supply -= migratedValue;
         balance[_owner] = 0;
-        supply -= tokens;
-        LogBurn(_owner, tokens);
+        LogMigrate(_owner, migratedValue);
 
-        // Automatically switch phase when migration is done.
+        // Automatically switch phases when migration is done.
         if(supply == 0) {
             currentPhase = Phase.Migrated;
             LogPhaseSwitch(Phase.Migrated);
         }
     }
 
-
-    function balanceOf(address _owner) constant returns (uint256 balanceOf) {
-        return balance[_owner];
-    }
-    
-    function totalSupply() constant returns (uint256 totalSupply) {
-        return supply;
-    }
-    
-    function allowance(address _owner, address _spender) constant returns (uint256 remaining) {
-        return allowed[_owner][_spender];
-    }
-
-    function transfer(address _to, uint256 _value) onlyWhileRunning returns (bool success) 
-    {
-        if (balance[msg.sender] >= _value && _value > 0) {
-            balance[msg.sender] -= _value;
-            balance[_to] += _value;
-            Transfer(msg.sender,_to,_value);
-            return true;
-        }
-        return false;
-    }
-    
-    function approve(address _spender, uint256 _value) onlyWhileRunning returns (bool success) {
-        if (balance[msg.sender] >= _value && _value > 0) {
-            allowed[msg.sender][_spender] = _value;
-            Approval(msg.sender,_spender,_value);
-            return true;
-        }
-        return false;
-    }
-    
-    
-    function transferFrom(address _from, address _to, uint256 _value) onlyWhileRunning returns (bool success) {
-        
-        if (allowed[_from][msg.sender] >= _value && balance[_from] >= _value && _value >= 0) 
-        {
-            allowed[_from][msg.sender] -= _value;
-            balance[_from] -= _value;
-            balance[_to] += _value;
-            Transfer(_from,_to,_value);
-            return true;
-        }
-        
-        return false;
-    }
-
-    function startPresale() public
+    function startPresale()
         onlyTokenManager
         onlyWhileCreated
     {
+        assert(address(priceTicker) != 0x0);
         currentPhase = Phase.Running;
         LogPhaseSwitch(Phase.Running);
     }
     
-    function finishPresale() public
+    function finishPresale()
         onlyTokenManager
         onlyWhileRunning
     {
         lastCentsPerETH = priceTicker.getCentsPerETH();
-        priceTicker.initiateCleanUp();
         currentPhase = Phase.Finished;
         LogPhaseSwitch(Phase.Finished);
     }
 
     
-    function finalizePresale() public
+    function finalizePresale()
         onlyTokenManager
         onlyWhileFinished
     {
-        if(!lastBuyer.send((refundValue * priceUSD * 100) / (lastCentsPerETH * 10**decimals))) throw;
+        if(!lastBuyer.send((refundValue * priceUSD * 100 * (1 ether / 1 wei)) / (lastCentsPerETH * uint(10)**decimals))) revert();
         withdrawEther();
         currentPhase = Phase.Finalized;
         LogPhaseSwitch(Phase.Finalized);
     }
 
-    function startMigration() public
+    function startMigration()
         onlyTokenManager
         onlyWhileFinalized
     {
-        if (crowdsaleManager == 0x0) throw;
+        assert(migrationManager != 0x0);
         currentPhase = Phase.Migrating;
         LogPhaseSwitch(Phase.Migrating);
     }
@@ -254,14 +293,71 @@ contract PresaleToken {
     function withdrawEther() private
     {
         if(this.balance > 0) {
-            if(!tokenManager.send(this.balance)) throw;
+            if(!tokenManager.send(this.balance)) revert();
         }
     }
 
-    function setCrowdsaleManager(address _mgr) public
+    function setMigrationManager(address _mgr)
         onlyTokenManager
         onlyWhileFinalized
     {
-        crowdsaleManager = _mgr;
+        migrationManager = _mgr;
     }
+    
+    function raiseCap(uint _newCap)
+        onlyTokenManager
+        onlyWhileFinalized
+    {
+        assert(_newCap > maxSupply);
+        maxSupply = _newCap;
+        currentPhase = Phase.Running;
+        LogPhaseSwitch(Phase.Running);
+    }
+    
+    ///Ticker interaction functions
+    
+    function createTicker() 
+        onlyTokenManager
+    {
+        priceTicker = new CMCEthereumTicker(tokenManager);
+    }
+    
+    function attachTicker(address _tickerAddress)
+        onlyTokenManager
+    {
+         priceTicker = CMCEthereumTicker(_tickerAddress);   
+    }
+    
+    function enableTicker() 
+        onlyTokenManager
+    {
+        priceTicker.enable();
+    }
+    
+    function disableTicker() 
+        onlyTokenManager
+    {
+        priceTicker.disable();
+    }
+    
+    function sendToTicker() payable
+        onlyTokenManager
+    {
+        assert(address(priceTicker) != 0x0);
+        if(!address(priceTicker).send(msg.value)) revert();
+    }
+    
+    function withdrawFromTicker(uint _amount) {
+        assert(address(priceTicker) != 0x0);
+        priceTicker.payToManager(_amount);
+    }
+    
+    function tickerAddress() constant returns (address) {
+        return address(priceTicker);
+    }
+    
+    function getCentsPerETH() constant returns (uint) {
+        return priceTicker.getCentsPerETH();
+    }
+    
 }
