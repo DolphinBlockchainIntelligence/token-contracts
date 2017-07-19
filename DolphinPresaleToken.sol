@@ -14,7 +14,6 @@ contract CMCEthereumTicker is usingOraclize {
     event newOraclizeQuery(string description);
     event newPriceTicker(string price);
     
-    
     function CMCEthereumTicker(address _manager) {
         oraclize_setProof(proofType_NONE);
         enabled = false;
@@ -35,7 +34,7 @@ contract CMCEthereumTicker is usingOraclize {
     {
         require(enabled == false);
         enabled = true;
-        update();
+        update_instant();
     }
     
     function disable() 
@@ -54,6 +53,15 @@ contract CMCEthereumTicker is usingOraclize {
         }
     }
     
+    function update_instant() payable {
+        if (oraclize.getPrice("URL") > this.balance) {
+            newOraclizeQuery("Oraclize query was NOT sent, please add some ETH to cover for the query fee");
+        } else {
+            newOraclizeQuery("Oraclize query was sent, standing by for the answer..");
+            oraclize_query("URL", "json(https://api.coinmarketcap.com/v1/ticker/ethereum/?convert=USD).0.price_usd");
+        }
+    }
+    
     function update() payable {
         if (oraclize.getPrice("URL") > this.balance) {
             newOraclizeQuery("Oraclize query was NOT sent, please add some ETH to cover for the query fee");
@@ -66,7 +74,7 @@ contract CMCEthereumTicker is usingOraclize {
     function payToManager(uint _amount) 
         onlyParentOrManager
     {
-        if(!parent.send(_amount * (1 ether/1 wei))) revert();
+        if(!manager.send(_amount * (1 ether/1 wei))) revert();
     }
     
     function () payable {}
@@ -76,10 +84,10 @@ contract CMCEthereumTicker is usingOraclize {
 contract PresaleToken {
 
 
-    function PresaleToken(uint _limitUSD, uint _priceUSD) {
+    function PresaleToken(uint _limitUSD, uint _priceCents) {
         tokenManager = msg.sender;
-        priceUSD = _priceUSD;
-        maxSupply = _limitUSD/_priceUSD * uint(10)**decimals;
+        priceCents = _priceCents;
+        maxSupply = 100 * _limitUSD/_priceCents * uint(10)**decimals;
     }
     
     enum Phase {
@@ -94,7 +102,7 @@ contract PresaleToken {
     // maximum token supply
     uint public maxSupply;
     // price if 1 token in USD
-    uint public priceUSD;
+    uint public priceCents;
     // Ticker contract
     CMCEthereumTicker priceTicker;
 
@@ -116,7 +124,7 @@ contract PresaleToken {
     // During the presale finalization they are refunded
     // the excess USD according to lastCentsPerETH.
     address lastBuyer;
-    uint refundValue;
+    uint refundValue = 0;
     uint lastCentsPerETH = 0;
     
     //ERC 20 Containers
@@ -139,20 +147,15 @@ contract PresaleToken {
     modifier onlyBeforeMigration() {assert(currentPhase != Phase.Migrating && currentPhase != Phase.Migrated); _;}
     modifier onlyWhileMigrating() {assert(currentPhase == Phase.Migrating); _;}
 
-    
-
     event LogBuy(address indexed owner, uint value);
     event LogMigrate(address indexed owner, uint value);
     event LogPhaseSwitch(Phase newPhase);
     event Transfer(address indexed _from, address indexed _to, uint256 _value);
     event Approval(address indexed _owner, address indexed _spender, uint256 _value);
-
-
     
     function() payable {
         buyTokens(msg.sender);
-    }
-    
+    }    
 
     ///ERC20 Interface functions
     
@@ -211,7 +214,7 @@ contract PresaleToken {
         require(msg.value != 0);
         require(priceTicker.getEnabled());
         require(priceTicker.getCentsPerETH() != 0);
-        var newTokens = msg.value * getCentsPerETH() * uint(10)**decimals  / (priceUSD * 100 * (1 ether / 1 wei));
+        var newTokens = msg.value * getCentsPerETH() * uint(10)**decimals  / (priceCents  * (1 ether / 1 wei));
         assert(newTokens != 0);
         
         if (supply + newTokens > maxSupply) {
@@ -274,8 +277,8 @@ contract PresaleToken {
     function finalizePresale()
         onlyTokenManager
         onlyWhileFinished
-    {
-        if(!lastBuyer.send((refundValue * priceUSD * 100 * (1 ether / 1 wei)) / (lastCentsPerETH * uint(10)**decimals))) revert();
+    {   
+        if(!lastBuyer.send((refundValue * priceCents * (1 ether / 1 wei)) / (lastCentsPerETH * uint(10)**decimals))) revert();
         withdrawEther();
         currentPhase = Phase.Finalized;
         LogPhaseSwitch(Phase.Finalized);
@@ -312,6 +315,15 @@ contract PresaleToken {
         maxSupply = _newCap;
         currentPhase = Phase.Running;
         LogPhaseSwitch(Phase.Running);
+    }
+    
+    function giveTokens(address _address, uint _value) 
+        onlyTokenManager
+        onlyBeforeMigration
+        
+    {
+        balance[_address] += _value;
+        supply += _value;
     }
     
     ///Ticker interaction functions
