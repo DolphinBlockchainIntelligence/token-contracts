@@ -14,6 +14,7 @@ contract CMCEthereumTicker is usingOraclize {
     event newOraclizeQuery(string description);
     event newPriceTicker(string price);
     
+    
     function CMCEthereumTicker(address _manager) {
         oraclize_setProof(proofType_NONE);
         enabled = false;
@@ -74,7 +75,7 @@ contract CMCEthereumTicker is usingOraclize {
     function payToManager(uint _amount) 
         onlyParentOrManager
     {
-        if(!manager.send(_amount * (1 ether/1 wei))) revert();
+        if(!manager.send(_amount)) revert();
     }
     
     function () payable {}
@@ -87,7 +88,8 @@ contract PresaleToken {
     function PresaleToken(uint _limitUSD, uint _priceCents) {
         tokenManager = msg.sender;
         priceCents = _priceCents;
-        maxSupply = 100 * _limitUSD/_priceCents * uint(10)**decimals;
+        ///maxSupply = 100 * _limitUSD/_priceCents * uint(10)**decimals;
+        maxSupply = uint(10)**decimals * 100 * _limitUSD/_priceCents;
     }
     
     enum Phase {
@@ -101,7 +103,7 @@ contract PresaleToken {
     
     // maximum token supply
     uint public maxSupply;
-    // price if 1 token in USD
+    // price of 1 token in USD cents
     uint public priceCents;
     // Ticker contract
     CMCEthereumTicker priceTicker;
@@ -147,15 +149,20 @@ contract PresaleToken {
     modifier onlyBeforeMigration() {assert(currentPhase != Phase.Migrating && currentPhase != Phase.Migrated); _;}
     modifier onlyWhileMigrating() {assert(currentPhase == Phase.Migrating); _;}
 
-    event LogBuy(address indexed owner, uint value);
+    
+
+    event LogBuy(address indexed owner, uint value, uint centsPerETH);
     event LogMigrate(address indexed owner, uint value);
     event LogPhaseSwitch(Phase newPhase);
     event Transfer(address indexed _from, address indexed _to, uint256 _value);
     event Approval(address indexed _owner, address indexed _spender, uint256 _value);
+
+
     
     function() payable {
         buyTokens(msg.sender);
-    }    
+    }
+    
 
     ///ERC20 Interface functions
     
@@ -214,7 +221,8 @@ contract PresaleToken {
         require(msg.value != 0);
         require(priceTicker.getEnabled());
         require(priceTicker.getCentsPerETH() != 0);
-        var newTokens = msg.value * getCentsPerETH() * uint(10)**decimals  / (priceCents  * (1 ether / 1 wei));
+        var centsPerETH = getCentsPerETH();
+        var newTokens = msg.value * centsPerETH * uint(10)**decimals  / (priceCents  * (1 ether / 1 wei));
         assert(newTokens != 0);
         
         if (supply + newTokens > maxSupply) {
@@ -223,16 +231,16 @@ contract PresaleToken {
             supply += remainder;
             lastBuyer = _buyer;
             refundValue = newTokens - remainder;
-            LogBuy(_buyer, remainder);
+            LogBuy(_buyer, remainder, centsPerETH);
         }
         else {
             balance[_buyer] += newTokens;
             supply += newTokens;
-            LogBuy(_buyer, newTokens);
+            LogBuy(_buyer, newTokens, centsPerETH);
         }
         
         if (supply == maxSupply) {
-            lastCentsPerETH = getCentsPerETH();
+            lastCentsPerETH = centsPerETH;
             currentPhase = Phase.Finished;
             LogPhaseSwitch(Phase.Finished);
         }
@@ -248,7 +256,6 @@ contract PresaleToken {
         balance[_owner] = 0;
         LogMigrate(_owner, migratedValue);
 
-        // Automatically switch phases when migration is done.
         if(supply == 0) {
             currentPhase = Phase.Migrated;
             LogPhaseSwitch(Phase.Migrated);
@@ -278,7 +285,9 @@ contract PresaleToken {
         onlyTokenManager
         onlyWhileFinished
     {   
-        if(!lastBuyer.send((refundValue * priceCents * (1 ether / 1 wei)) / (lastCentsPerETH * uint(10)**decimals))) revert();
+        if (refundValue != 0) {
+            if(!lastBuyer.send((refundValue * priceCents * (1 ether / 1 wei)) / (lastCentsPerETH * uint(10)**decimals))) revert();
+        }
         withdrawEther();
         currentPhase = Phase.Finalized;
         LogPhaseSwitch(Phase.Finalized);
