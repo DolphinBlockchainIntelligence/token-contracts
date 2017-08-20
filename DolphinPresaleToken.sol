@@ -10,9 +10,7 @@ library SafeMath {
   }
 
   function div(uint256 a, uint256 b) internal returns (uint256) {
-    // assert(b > 0); // Solidity automatically throws when dividing by 0
     uint256 c = a / b;
-    // assert(a == b * c + a % b); // There is no case in which this doesn't hold
     return c;
   }
 
@@ -25,22 +23,6 @@ library SafeMath {
     uint256 c = a + b;
     assert(c >= a);
     return c;
-  }
-
-  function max64(uint64 a, uint64 b) internal constant returns (uint64) {
-    return a >= b ? a : b;
-  }
-
-  function min64(uint64 a, uint64 b) internal constant returns (uint64) {
-    return a < b ? a : b;
-  }
-
-  function max256(uint256 a, uint256 b) internal constant returns (uint256) {
-    return a >= b ? a : b;
-  }
-
-  function min256(uint256 a, uint256 b) internal constant returns (uint256) {
-    return a < b ? a : b;
   }
 
 }
@@ -120,7 +102,7 @@ contract CMCEthereumTicker is usingOraclize {
     function payToManager(uint _amount) 
         onlyParentOrManager
     {
-        parent.transfer(_amount.mul(1 ether/1 wei));
+        parent.transfer(_amount);
     }
     
     function () payable {}
@@ -133,7 +115,7 @@ contract PresaleToken {
     function PresaleToken(uint256 _limitUSD, uint256 _priceCents) {
         tokenManager = msg.sender;
         priceCents = _priceCents;
-        maxSupply = (uint(10)**decimals).mul(100).mul(_limitUSD.div(_priceCents));
+        maxSupply = (uint(10)**decimals).mul(100).mul(_limitUSD).div(_priceCents);
     }
     
     enum Phase {
@@ -233,7 +215,7 @@ contract PresaleToken {
         return allowed[_owner][_spender];
     }
 
-    function transfer(address _to, uint256 _value) onlyWhileRunning minimalPayloadSize(2 * 32) returns (bool success) 
+    function transfer(address _to, uint256 _value) onlyBeforeMigration minimalPayloadSize(2 * 32) returns (bool success) 
     {
         assert(_value > 0);
         
@@ -244,7 +226,7 @@ contract PresaleToken {
         return true;
     }
     
-    function approve(address _spender, uint256 _value) onlyWhileRunning returns (bool success) {
+    function approve(address _spender, uint256 _value) onlyBeforeMigration returns (bool success) {
         assert((_value == 0) || (allowed[msg.sender][_spender] == 0));
         
         allowed[msg.sender][_spender] = _value;
@@ -254,7 +236,7 @@ contract PresaleToken {
     }
     
     
-    function transferFrom(address _from, address _to, uint256 _value) minimalPayloadSize(3 * 32) onlyWhileRunning returns (bool success) {
+    function transferFrom(address _from, address _to, uint256 _value) onlyBeforeMigration minimalPayloadSize(3 * 32) returns (bool success) {
         
         assert(_value > 0);
 
@@ -276,7 +258,7 @@ contract PresaleToken {
         require(priceTicker.getEnabled());
         
         var centsPerETH = getCentsPerETH();
-        require(priceTicker.getCentsPerETH() != 0);
+        require(centsPerETH != 0);
         
         var newTokens = msg.value.mul(centsPerETH).mul(uint(10)**decimals).div(priceCents.mul(1 ether / 1 wei));
         assert(newTokens != 0);
@@ -308,7 +290,7 @@ contract PresaleToken {
     {
         assert(balance[_owner] != 0);
         var migratedValue = balance[_owner];
-        supply -= supply.sub(migratedValue);
+        supply = supply.sub(migratedValue);
         balance[_owner] = 0;
         LogMigrate(_owner, migratedValue);
 
