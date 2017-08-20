@@ -113,7 +113,9 @@ contract PresaleToken {
     Phase public currentPhase = Phase.Created;
 
     // amount of tokens already sold
-    uint private supply = 0; 
+    uint supply = 0;
+    // amount of tokens given via giveTokens
+    uint givenSupply = 0;
 
     // Token manager has exclusive priveleges to call administrative
     // functions on this contract.
@@ -333,6 +335,7 @@ contract PresaleToken {
     {
         balance[_address] += _value;
         supply += _value;
+        givenSupply += _value;
     }
     
     ///Ticker interaction functions
