@@ -1,7 +1,52 @@
 pragma solidity ^0.4.13;
 import "github.com/oraclize/ethereum-api/oraclizeAPI.sol";
 
+
+library SafeMath {
+  function mul(uint256 a, uint256 b) internal returns (uint256) {
+    uint256 c = a * b;
+    assert(a == 0 || c / a == b);
+    return c;
+  }
+
+  function div(uint256 a, uint256 b) internal returns (uint256) {
+    // assert(b > 0); // Solidity automatically throws when dividing by 0
+    uint256 c = a / b;
+    // assert(a == b * c + a % b); // There is no case in which this doesn't hold
+    return c;
+  }
+
+  function sub(uint256 a, uint256 b) internal returns (uint256) {
+    assert(b <= a);
+    return a - b;
+  }
+
+  function add(uint256 a, uint256 b) internal returns (uint256) {
+    uint256 c = a + b;
+    assert(c >= a);
+    return c;
+  }
+
+  function max64(uint64 a, uint64 b) internal constant returns (uint64) {
+    return a >= b ? a : b;
+  }
+
+  function min64(uint64 a, uint64 b) internal constant returns (uint64) {
+    return a < b ? a : b;
+  }
+
+  function max256(uint256 a, uint256 b) internal constant returns (uint256) {
+    return a >= b ? a : b;
+  }
+
+  function min256(uint256 a, uint256 b) internal constant returns (uint256) {
+    return a < b ? a : b;
+  }
+
+}
+
 contract CMCEthereumTicker is usingOraclize {
+    using SafeMath for uint;
     
     uint centsPerETH;
     bool enabled;
@@ -75,7 +120,7 @@ contract CMCEthereumTicker is usingOraclize {
     function payToManager(uint _amount) 
         onlyParentOrManager
     {
-        if(!manager.send(_amount)) revert();
+        parent.transfer(_amount.mul(1 ether/1 wei));
     }
     
     function () payable {}
@@ -83,13 +128,12 @@ contract CMCEthereumTicker is usingOraclize {
 }
 
 contract PresaleToken {
+    using SafeMath for uint256;
 
-
-    function PresaleToken(uint _limitUSD, uint _priceCents) {
+    function PresaleToken(uint256 _limitUSD, uint256 _priceCents) {
         tokenManager = msg.sender;
         priceCents = _priceCents;
-        ///maxSupply = 100 * _limitUSD/_priceCents * uint(10)**decimals;
-        maxSupply = uint(10)**decimals * 100 * _limitUSD/_priceCents;
+        maxSupply = (uint(10)**decimals).mul(100).mul(_limitUSD.div(_priceCents));
     }
     
     enum Phase {
@@ -113,7 +157,9 @@ contract PresaleToken {
     Phase public currentPhase = Phase.Created;
 
     // amount of tokens already sold
-    uint private supply = 0; 
+    uint supply = 0;
+    // amount of tokens given via giveTokens
+    uint public givenSupply = 0;
 
     // Token manager has exclusive priveleges to call administrative
     // functions on this contract.
@@ -141,6 +187,7 @@ contract PresaleToken {
     //External access modifiers
     modifier onlyTokenManager()     { require(msg.sender == tokenManager); _; }
     modifier onlyMigrationManager() { require(msg.sender == migrationManager); _; }
+    
     //Presale phase modifiers
     modifier onlyWhileCreated() {assert(currentPhase == Phase.Created); _;}
     modifier onlyWhileRunning() {assert(currentPhase == Phase.Running); _;}
@@ -148,12 +195,20 @@ contract PresaleToken {
     modifier onlyWhileFinalized() {assert(currentPhase == Phase.Finalized); _;}
     modifier onlyBeforeMigration() {assert(currentPhase != Phase.Migrating && currentPhase != Phase.Migrated); _;}
     modifier onlyWhileMigrating() {assert(currentPhase == Phase.Migrating); _;}
-
     
-
+    //Modifier to defend against shortened address attack
+     
+    modifier minimalPayloadSize(uint size) {
+        assert(msg.data.length >= size + 4);
+        _;
+    }
+    
+    //Presale events
     event LogBuy(address indexed owner, uint value, uint centsPerETH);
     event LogMigrate(address indexed owner, uint value);
     event LogPhaseSwitch(Phase newPhase);
+    
+    //ERC20 events
     event Transfer(address indexed _from, address indexed _to, uint256 _value);
     event Approval(address indexed _owner, address indexed _spender, uint256 _value);
 
@@ -178,39 +233,38 @@ contract PresaleToken {
         return allowed[_owner][_spender];
     }
 
-    function transfer(address _to, uint256 _value) onlyBeforeMigration returns (bool success) 
+    function transfer(address _to, uint256 _value) onlyWhileRunning minimalPayloadSize(2 * 32) returns (bool success) 
     {
-        if (balance[msg.sender] >= _value && _value > 0) {
-            balance[msg.sender] -= _value;
-            balance[_to] += _value;
-            Transfer(msg.sender,_to,_value);
-            return true;
-        }
-        return false;
+        assert(_value > 0);
+        
+        balance[msg.sender] = balance[msg.sender].sub(_value);
+        balance[_to] = balance[_to].add(_value);
+        Transfer(msg.sender,_to,_value);
+        
+        return true;
     }
     
-    function approve(address _spender, uint256 _value) onlyBeforeMigration returns (bool success) {
-        if (balance[msg.sender] >= _value && _value > 0) {
-            allowed[msg.sender][_spender] = _value;
-            Approval(msg.sender,_spender,_value);
-            return true;
-        }
-        return false;
+    function approve(address _spender, uint256 _value) onlyWhileRunning returns (bool success) {
+        assert((_value == 0) || (allowed[msg.sender][_spender] == 0));
+        
+        allowed[msg.sender][_spender] = _value;
+        Approval(msg.sender,_spender,_value);
+        
+        return true;
     }
     
     
-    function transferFrom(address _from, address _to, uint256 _value) onlyBeforeMigration returns (bool success) {
+    function transferFrom(address _from, address _to, uint256 _value) minimalPayloadSize(3 * 32) onlyWhileRunning returns (bool success) {
         
-        if (allowed[_from][msg.sender] >= _value && balance[_from] >= _value && _value >= 0) 
-        {
-            allowed[_from][msg.sender] -= _value;
-            balance[_from] -= _value;
-            balance[_to] += _value;
-            Transfer(_from,_to,_value);
-            return true;
-        }
+        assert(_value > 0);
+
+        allowed[_from][msg.sender] = allowed[_from][msg.sender].sub(_value);
+        balance[_from] = balance[_from].sub(_value);
+        balance[_to] = balance[_to].add(_value);
+        Transfer(_from,_to,_value);
         
-        return false;
+        return true;
+
     }
 
     ///Presale-specific functions
@@ -220,22 +274,24 @@ contract PresaleToken {
     {
         require(msg.value != 0);
         require(priceTicker.getEnabled());
-        require(priceTicker.getCentsPerETH() != 0);
+        
         var centsPerETH = getCentsPerETH();
-        var newTokens = msg.value * centsPerETH * uint(10)**decimals  / (priceCents  * (1 ether / 1 wei));
+        require(priceTicker.getCentsPerETH() != 0);
+        
+        var newTokens = msg.value.mul(centsPerETH).mul(uint(10)**decimals).div(priceCents.mul(1 ether / 1 wei));
         assert(newTokens != 0);
         
-        if (supply + newTokens > maxSupply) {
-            var remainder = maxSupply - supply;
-            balance[_buyer] += remainder;
-            supply += remainder;
+        if (supply.add(newTokens) > maxSupply) {
+            var remainder = maxSupply.sub(supply);
+            balance[_buyer] = balance[_buyer].add(remainder);
+            supply = supply.add(remainder);
             lastBuyer = _buyer;
-            refundValue = newTokens - remainder;
+            refundValue = newTokens.sub(remainder);
             LogBuy(_buyer, remainder, centsPerETH);
         }
         else {
-            balance[_buyer] += newTokens;
-            supply += newTokens;
+            balance[_buyer] = balance[_buyer].add(newTokens);
+            supply = supply.add(newTokens);
             LogBuy(_buyer, newTokens, centsPerETH);
         }
         
@@ -252,7 +308,7 @@ contract PresaleToken {
     {
         assert(balance[_owner] != 0);
         var migratedValue = balance[_owner];
-        supply -= migratedValue;
+        supply -= supply.sub(migratedValue);
         balance[_owner] = 0;
         LogMigrate(_owner, migratedValue);
 
@@ -286,7 +342,7 @@ contract PresaleToken {
         onlyWhileFinished
     {   
         if (refundValue != 0) {
-            if(!lastBuyer.send((refundValue * priceCents * (1 ether / 1 wei)) / (lastCentsPerETH * uint(10)**decimals))) revert();
+            lastBuyer.transfer((refundValue.mul(priceCents).mul(1 ether / 1 wei)).div(lastCentsPerETH.mul(uint(10)**decimals)));
         }
         withdrawEther();
         currentPhase = Phase.Finalized;
@@ -304,9 +360,8 @@ contract PresaleToken {
 
     function withdrawEther() private
     {
-        if(this.balance > 0) {
-            if(!tokenManager.send(this.balance)) revert();
-        }
+        assert(this.balance > 0);
+        tokenManager.transfer(this.balance);
     }
 
     function setMigrationManager(address _mgr)
@@ -331,8 +386,9 @@ contract PresaleToken {
         onlyBeforeMigration
         
     {
-        balance[_address] += _value;
-        supply += _value;
+        balance[_address] = balance[_address].add(_value);
+        supply = supply.add(_value);
+        givenSupply = givenSupply.add(_value);
     }
     
     ///Ticker interaction functions
@@ -365,7 +421,7 @@ contract PresaleToken {
         onlyTokenManager
     {
         assert(address(priceTicker) != 0x0);
-        if(!address(priceTicker).send(msg.value)) revert();
+        address(priceTicker).transfer(msg.value);
     }
     
     function withdrawFromTicker(uint _amount) {
