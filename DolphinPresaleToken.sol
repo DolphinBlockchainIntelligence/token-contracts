@@ -102,7 +102,7 @@ contract CMCEthereumTicker is usingOraclize {
     function payToManager(uint _amount) 
         onlyParentOrManager
     {
-        parent.transfer(_amount);
+        manager.transfer(_amount);
     }
     
     function () payable {}
