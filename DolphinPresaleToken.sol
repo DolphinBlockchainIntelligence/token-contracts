@@ -27,17 +27,52 @@ library SafeMath {
 
 }
 
-contract CMCEthereumTicker is usingOraclize {
+contract Ownable {
+  address public owner;
+
+  function Ownable() {
+    owner = msg.sender;
+  }
+
+  modifier onlyOwner() {
+    require(msg.sender == owner);
+    _;
+  }
+
+  function transferOwnership(address newOwner) onlyOwner {
+    if (newOwner != address(0)) {
+      owner = newOwner;
+    }
+  }
+
+}
+
+contract Freezable is Ownable {
+    
+    bool frozen = false;
+    
+    modifier whileNotFrozen {assert(frozen == true); _;}
+    
+    function freeze() onlyOwner {
+        frozen = true;
+    }
+    
+    function unfreeze() onlyOwner {
+        frozen = false;
+    }
+    
+}
+
+contract CMCEthereumTicker is usingOraclize, Ownable {
     using SafeMath for uint;
     
     uint centsPerETH;
-    uint delay;
+    uint256 delay;
     bool enabled;
     
-    address parent;
     address manager;
     
-    modifier onlyParentOrManager() { require(msg.sender == parent || msg.sender == manager); _; }
+    modifier onlyOwnerOrManager() { require(msg.sender == owner || msg.sender == manager); _; }
     
     event newOraclizeQuery(string description);
     event newPriceTicker(string price);
@@ -46,7 +81,6 @@ contract CMCEthereumTicker is usingOraclize {
     function CMCEthereumTicker(address _manager, uint256 _delay) {
         oraclize_setProof(proofType_NONE);
         enabled = false;
-        parent = msg.sender;
         manager = _manager;
         delay = _delay;
     }
@@ -60,7 +94,7 @@ contract CMCEthereumTicker is usingOraclize {
     }
     
     function enable() 
-        onlyParentOrManager
+        onlyOwnerOrManager
     {
         require(enabled == false);
         enabled = true;
@@ -68,7 +102,7 @@ contract CMCEthereumTicker is usingOraclize {
     }
     
     function disable() 
-        onlyParentOrManager
+        onlyOwnerOrManager
     {
         require(enabled == true);
         enabled = false;
@@ -102,7 +136,7 @@ contract CMCEthereumTicker is usingOraclize {
     }
     
     function payToManager(uint _amount) 
-        onlyParentOrManager
+        onlyOwnerOrManager
     {
         manager.transfer(_amount);
     }
@@ -111,55 +145,66 @@ contract CMCEthereumTicker is usingOraclize {
     
 }
 
-contract PresaleToken {
-    using SafeMath for uint256;
-
-    function PresaleToken(uint256 _limitUSD, uint256 _priceCents) {
-        tokenManager = msg.sender;
-        priceCents = _priceCents;
-        maxSupply = (uint(10)**decimals).mul(100).mul(_limitUSD).div(_priceCents);
-    }
+contract TickerController is Ownable{
     
-    enum Phase {
-        Created,
-        Running,
-        Finished,
-        Finalized,
-        Migrating,
-        Migrated
-    }
-    
-    // maximum token supply
-    uint public maxSupply;
-    // price of 1 token in USD cents
-    uint public priceCents;
-    // Ticker contract
+    //Ticker contract
     CMCEthereumTicker priceTicker;
-
     
-    //Phase on contract creation
-    Phase public currentPhase = Phase.Created;
-
-    // amount of tokens already sold
-    uint supply = 0;
-    // amount of tokens given via giveTokens
-    uint public givenSupply = 0;
-
-    // Token manager has exclusive priveleges to call administrative
-    // functions on this contract.
-    address public tokenManager;
-    // Migration manager has privileges to burn tokens during migration.
-    address public migrationManager;
+    function createTicker(uint256 _delay) 
+        onlyOwner
+    {
+        priceTicker = new CMCEthereumTicker(owner, _delay);
+    }
     
-    // The last buyer is the buyer that purchased
-    // tokens that add up to the maxSupply or more.
-    // During the presale finalization they are refunded
-    // the excess USD according to lastCentsPerETH.
-    address lastBuyer;
-    uint refundValue = 0;
-    uint lastCentsPerETH = 0;
+    function attachTicker(address _tickerAddress)
+        onlyOwner
+    {
+         priceTicker = CMCEthereumTicker(_tickerAddress);   
+    }
     
-    //ERC 20 Containers
+    function enableTicker() 
+        onlyOwner
+    {
+        priceTicker.enable();
+    }
+    
+    function disableTicker() 
+        onlyOwner
+    {
+        priceTicker.disable();
+    }
+    
+    function sendToTicker() payable
+        onlyOwner
+    {
+        assert(address(priceTicker) != 0x0);
+        address(priceTicker).transfer(msg.value);
+    }
+    
+    function withdrawFromTicker(uint _amount)
+        onlyOwner
+    {
+        assert(address(priceTicker) != 0x0);
+        priceTicker.payToManager(_amount);
+    }
+    
+    function tickerAddress() constant returns (address) {
+        return address(priceTicker);
+    }
+    
+    function getCentsPerETH() constant returns (uint) {
+        return priceTicker.getCentsPerETH();
+    }
+}
+
+contract DBIPToken is Freezable {
+    using SafeMath for uint256;
+    
+    //ERC20 Fields
+    
+    uint supply;
+    
+    //ERC20 Containers
     mapping (address => uint256) private balance;
     mapping (address => mapping(address => uint256)) private allowed;
     
@@ -167,18 +212,11 @@ contract PresaleToken {
     string public constant name = "Dolphin Presale Token";
     string public constant symbol = "DBIP";
     uint8 public constant decimals = 18;
-
-    //External access modifiers
-    modifier onlyTokenManager()     { require(msg.sender == tokenManager); _; }
-    modifier onlyMigrationManager() { require(msg.sender == migrationManager); _; }
     
-    //Presale phase modifiers
-    modifier onlyWhileCreated() {assert(currentPhase == Phase.Created); _;}
-    modifier onlyWhileRunning() {assert(currentPhase == Phase.Running); _;}
-    modifier onlyWhileFinished() {assert(currentPhase == Phase.Finished); _;}
-    modifier onlyWhileFinalized() {assert(currentPhase == Phase.Finalized); _;}
-    modifier onlyBeforeMigration() {assert(currentPhase != Phase.Migrating && currentPhase != Phase.Migrated); _;}
-    modifier onlyWhileMigrating() {assert(currentPhase == Phase.Migrating); _;}
+    //ERC20 events
+    event Transfer(address indexed _from, address indexed _to, uint256 _value);
+    event Approval(address indexed _owner, address indexed _spender, uint256 _value);
+
     
     //Modifier to defend against shortened address attack
      
@@ -187,22 +225,21 @@ contract PresaleToken {
         _;
     }
     
-    //Presale events
-    event LogBuy(address indexed owner, uint value, uint centsPerETH);
-    event LogMigrate(address indexed owner, uint value);
-    event LogPhaseSwitch(Phase newPhase);
-    
-    //ERC20 events
-    event Transfer(address indexed _from, address indexed _to, uint256 _value);
-    event Approval(address indexed _owner, address indexed _spender, uint256 _value);
-
-
-    
-    function() payable {
-        buyTokens(msg.sender);
+    function DBIPToken (uint256 _initial_supply) {
+        balance[owner] = _initial_supply;
+        supply = _initial_supply;
     }
     
-
+    //Method to generate additional tokens. Can only be called by parent contract.
+    
+    function raiseSupply (uint256 _new_supply) 
+        onlyOwner
+    {
+        uint256 increase = _new_supply.sub(supply);
+        balance[owner] = balance[owner].add(increase);
+        supply = supply.add(increase);
+    }
+    
     ///ERC20 Interface functions
     
     function balanceOf(address _owner) constant returns (uint256 balanceOf) {
@@ -217,7 +254,7 @@ contract PresaleToken {
         return allowed[_owner][_spender];
     }
 
-    function transfer(address _to, uint256 _value) onlyBeforeMigration minimalPayloadSize(2 * 32) returns (bool success) 
+    function transfer(address _to, uint256 _value) whileNotFrozen minimalPayloadSize(2 * 32) returns (bool success) 
     {
         assert(_value > 0);
         
@@ -228,7 +265,7 @@ contract PresaleToken {
         return true;
     }
     
-    function approve(address _spender, uint256 _value) onlyBeforeMigration returns (bool success) {
+    function approve(address _spender, uint256 _value) whileNotFrozen  returns (bool success) {
         assert((_value == 0) || (allowed[msg.sender][_spender] == 0));
         
         allowed[msg.sender][_spender] = _value;
@@ -238,7 +275,7 @@ contract PresaleToken {
     }
     
     
-    function transferFrom(address _from, address _to, uint256 _value) onlyBeforeMigration minimalPayloadSize(3 * 32) returns (bool success) {
+    function transferFrom(address _from, address _to, uint256 _value) whileNotFrozen minimalPayloadSize(3 * 32) returns (bool success) {
         
         assert(_value > 0);
 
@@ -250,8 +287,85 @@ contract PresaleToken {
         return true;
 
     }
+    
+}
 
+contract PresaleToken is TickerController {
+    using SafeMath for uint256;
+
+    function PresaleToken(uint256 _limitUSD, uint256 _priceCents) {
+        priceCents = _priceCents;
+        maxSupply = (uint(10)**decimals).mul(100).mul(_limitUSD).div(_priceCents);
+        token = new DBIPToken(maxSupply);
+        assert(decimals == token.decimals());
+    }
+    
+    enum Phase {
+        Created,
+        Running,
+        Finished,
+        Finalized,
+        Migrating,
+        Migrated
+    }
+    
+    // token
+    DBIPToken token;
+    // maximum token supply
+    uint public maxSupply;
+    // price of 1 token in USD cents
+    uint public priceCents;
+    // Decimals of token needed for most operations
+    uint public decimals = 18;
+    
+    
+    //Phase on contract creation
+    Phase public currentPhase = Phase.Created;
+
+    // amount of tokens already sold
+    uint public funded = 0;
+    // amount of tokens given via giveTokens
+    uint public given = 0;
+
+    // Migration manager has privileges to burn tokens during migration.
+    address public migrationManager;
+    
+    // Used to check whether the address has already migrated
+    mapping (address => bool) migrated;
+    
+    // The last buyer is the buyer that purchased
+    // tokens that add up to the maxSupply or more.
+    // During the presale finalization they are refunded
+    // the excess USD according to lastCentsPerETH.
+    address lastBuyer;
+    uint refundValue = 0;
+    uint lastCentsPerETH = 0;
+    
+    // Whether the funding cap was already raised
+    bool capRaised = false;
+
+    //External access modifiers
+    modifier onlyMigrationManager() { require(msg.sender == migrationManager); _; }
+    
+    //Presale phase modifiers
+    modifier onlyWhileCreated() {assert(currentPhase == Phase.Created); _;}
+    modifier onlyWhileRunning() {assert(currentPhase == Phase.Running); _;}
+    modifier onlyWhileFinished() {assert(currentPhase == Phase.Finished); _;}
+    modifier onlyWhileFinalized() {assert(currentPhase == Phase.Finalized); _;}
+    modifier onlyBeforeMigration() {assert(currentPhase != Phase.Migrating && currentPhase != Phase.Migrated); _;}
+    modifier onlyWhileMigrating() {assert(currentPhase == Phase.Migrating); _;}
+    
+    //Presale events
+    event LogBuy(address indexed owner, uint value, uint centsPerETH);
+    event LogGive(address indexed owner, uint valuem, string reason);
+    event LogMigrate(address indexed owner, uint value);
+    event LogPhaseSwitch(Phase newPhase);
+    
     ///Presale-specific functions
+    
+    function() payable {
+        buyTokens(msg.sender);
+    }
 
     function buyTokens(address _buyer) payable
         onlyWhileRunning
@@ -265,21 +379,21 @@ contract PresaleToken {
         var newTokens = msg.value.mul(centsPerETH).mul(uint(10)**decimals).div(priceCents.mul(1 ether / 1 wei));
         assert(newTokens != 0);
         
-        if (supply.add(newTokens) > maxSupply) {
-            var remainder = maxSupply.sub(supply);
-            balance[_buyer] = balance[_buyer].add(remainder);
-            supply = supply.add(remainder);
+        if (funded.add(newTokens) > maxSupply) {
+            var remainder = maxSupply.sub(funded);
+            token.transfer(_buyer, remainder);
+            funded = funded.add(remainder);
             lastBuyer = _buyer;
             refundValue = newTokens.sub(remainder);
             LogBuy(_buyer, remainder, centsPerETH);
         }
         else {
-            balance[_buyer] = balance[_buyer].add(newTokens);
-            supply = supply.add(newTokens);
+            token.transfer(_buyer, newTokens);
+            funded = funded.add(newTokens);
             LogBuy(_buyer, newTokens, centsPerETH);
         }
         
-        if (supply == maxSupply) {
+        if (funded == maxSupply) {
             lastCentsPerETH = centsPerETH;
             currentPhase = Phase.Finished;
             LogPhaseSwitch(Phase.Finished);
@@ -290,29 +404,28 @@ contract PresaleToken {
         onlyMigrationManager
         onlyWhileMigrating
     {
-        assert(balance[_owner] != 0);
-        var migratedValue = balance[_owner];
-        supply = supply.sub(migratedValue);
-        balance[_owner] = 0;
+        assert(token.balanceOf(_owner) != 0);
+        var migratedValue = token.balanceOf(_owner);
+        funded = funded.sub(migratedValue);
         LogMigrate(_owner, migratedValue);
-
-        if(supply == 0) {
+        migrated[_owner] = true;
+        if(funded == 0) {
             currentPhase = Phase.Migrated;
             LogPhaseSwitch(Phase.Migrated);
         }
     }
 
     function startPresale()
-        onlyTokenManager
+        onlyOwner
         onlyWhileCreated
     {
-        assert(address(priceTicker) != 0x0);
+        assert(address(priceTicker) != address(0));
         currentPhase = Phase.Running;
         LogPhaseSwitch(Phase.Running);
     }
     
     function finishPresale()
-        onlyTokenManager
+        onlyOwner
         onlyWhileRunning
     {
         lastCentsPerETH = priceTicker.getCentsPerETH();
@@ -322,7 +435,7 @@ contract PresaleToken {
 
     
     function finalizePresale()
-        onlyTokenManager
+        onlyOwner
         onlyWhileFinished
     {   
         if (refundValue != 0) {
@@ -334,10 +447,11 @@ contract PresaleToken {
     }
 
     function startMigration()
-        onlyTokenManager
+        onlyOwner
         onlyWhileFinalized
     {
-        assert(migrationManager != 0x0);
+        assert(migrationManager != address(0));
+        token.freeze();
         currentPhase = Phase.Migrating;
         LogPhaseSwitch(Phase.Migrating);
     }
@@ -345,80 +459,37 @@ contract PresaleToken {
     function withdrawEther() private
     {
         assert(this.balance > 0);
-        tokenManager.transfer(this.balance);
+        owner.transfer(this.balance);
     }
 
     function setMigrationManager(address _mgr)
-        onlyTokenManager
+        onlyOwner
         onlyWhileFinalized
     {
         migrationManager = _mgr;
     }
     
     function raiseCap(uint _newCap)
-        onlyTokenManager
+        onlyOwner
         onlyWhileFinalized
     {
+        assert(!capRaised);
         assert(_newCap > maxSupply);
         maxSupply = _newCap;
+        token.raiseSupply(_newCap);
         currentPhase = Phase.Running;
         LogPhaseSwitch(Phase.Running);
     }
     
-    function giveTokens(address _address, uint _value) 
-        onlyTokenManager
+    function giveTokens(address _address, uint _value, string _reason) 
+        onlyOwner
         onlyBeforeMigration
         
     {
-        balance[_address] = balance[_address].add(_value);
-        supply = supply.add(_value);
-        givenSupply = givenSupply.add(_value);
-    }
-    
-    ///Ticker interaction functions
-    
-    function createTicker(uint256 _delay) 
-        onlyTokenManager
-    {
-        priceTicker = new CMCEthereumTicker(tokenManager, _delay);
-    }
-    
-    function attachTicker(address _tickerAddress)
-        onlyTokenManager
-    {
-         priceTicker = CMCEthereumTicker(_tickerAddress);   
-    }
-    
-    function enableTicker() 
-        onlyTokenManager
-    {
-        priceTicker.enable();
-    }
-    
-    function disableTicker() 
-        onlyTokenManager
-    {
-        priceTicker.disable();
-    }
-    
-    function sendToTicker() payable
-        onlyTokenManager
-    {
-        assert(address(priceTicker) != 0x0);
-        address(priceTicker).transfer(msg.value);
-    }
-    
-    function withdrawFromTicker(uint _amount) {
-        assert(address(priceTicker) != 0x0);
-        priceTicker.payToManager(_amount);
-    }
-    
-    function tickerAddress() constant returns (address) {
-        return address(priceTicker);
-    }
-    
-    function getCentsPerETH() constant returns (uint) {
-        return priceTicker.getCentsPerETH();
+        token.transfer(_address, _value);
+        funded = funded.add(_value);
+        given = given.add(_value);
+        LogGive(_address, _value, _reason);
     }
     
 }
