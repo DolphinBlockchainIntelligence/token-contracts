@@ -31,6 +31,7 @@ contract CMCEthereumTicker is usingOraclize {
     using SafeMath for uint;
     
     uint centsPerETH;
+    uint delay;
     bool enabled;
     
     address parent;
@@ -42,11 +43,12 @@ contract CMCEthereumTicker is usingOraclize {
     event newPriceTicker(string price);
     
     
-    function CMCEthereumTicker(address _manager) {
+    function CMCEthereumTicker(address _manager, uint256 _delay) {
         oraclize_setProof(proofType_NONE);
         enabled = false;
         parent = msg.sender;
         manager = _manager;
+        delay = _delay;
     }
     
     function getCentsPerETH() constant returns(uint) {
@@ -95,7 +97,7 @@ contract CMCEthereumTicker is usingOraclize {
             newOraclizeQuery("Oraclize query was NOT sent, please add some ETH to cover for the query fee");
         } else {
             newOraclizeQuery("Oraclize query was sent, standing by for the answer..");
-            oraclize_query(60, "URL", "json(https://api.coinmarketcap.com/v1/ticker/ethereum/?convert=USD).0.price_usd");
+            oraclize_query(delay, "URL", "json(https://api.coinmarketcap.com/v1/ticker/ethereum/?convert=USD).0.price_usd");
         }
     }
     
@@ -375,10 +377,10 @@ contract PresaleToken {
     
     ///Ticker interaction functions
     
-    function createTicker() 
+    function createTicker(uint256 _delay) 
         onlyTokenManager
     {
-        priceTicker = new CMCEthereumTicker(tokenManager);
+        priceTicker = new CMCEthereumTicker(tokenManager, _delay);
     }
     
     function attachTicker(address _tickerAddress)
