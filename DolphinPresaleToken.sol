@@ -290,7 +290,26 @@ contract DBIPToken is Freezable {
     
 }
 
-contract PresaleToken is TickerController {
+contract ReferralProxyHandler is Ownable{
+    
+    // Proxy is a contract throught which referral investors buy tokens
+    address public proxy;
+    // amount of tokens sold through proxy
+    uint256 public fundedProxy = 0;
+    
+    modifier onlyProxy { require(msg.sender == proxy); _; }
+    
+    function setProxy(address _proxy) 
+        onlyOwner
+    {
+        proxy = _proxy;
+    }
+    
+    function buyThroughProxy(address _buyer) payable;
+    
+}
+
+contract PresaleToken is TickerController, ReferralProxyHandler {
     using SafeMath for uint256;
 
     function PresaleToken(uint256 _limitUSD, uint256 _priceCents) {
@@ -309,23 +328,23 @@ contract PresaleToken is TickerController {
         Migrated
     }
     
-    // token
+    // Token
     DBIPToken token;
     // maximum token supply
-    uint public maxSupply;
+    uint256 public maxSupply;
     // price of 1 token in USD cents
-    uint public priceCents;
+    uint256 public priceCents;
     // Decimals of token needed for most operations
-    uint public decimals = 18;
-    
+    uint256 public decimals = 18;
     
     //Phase on contract creation
     Phase public currentPhase = Phase.Created;
 
     // amount of tokens already sold
-    uint public funded = 0;
+    uint256 public funded = 0;
     // amount of tokens given via giveTokens
-    uint public given = 0;
+    uint256 public given = 0;
+
 
     // Migration manager has privileges to burn tokens during migration.
     address public migrationManager;
@@ -344,7 +363,7 @@ contract PresaleToken is TickerController {
     // Whether the funding cap was already raised
     bool capRaised = false;
 
-    //External access modifiers
+    //External access modifier
     modifier onlyMigrationManager() { require(msg.sender == migrationManager); _; }
     
     //Presale phase modifiers
@@ -356,9 +375,9 @@ contract PresaleToken is TickerController {
     modifier onlyWhileMigrating() {assert(currentPhase == Phase.Migrating); _;}
     
     //Presale events
-    event LogBuy(address indexed owner, uint value, uint centsPerETH);
-    event LogGive(address indexed owner, uint valuem, string reason);
-    event LogMigrate(address indexed owner, uint value);
+    event LogBuy(address indexed owner, uint256 value, uint256 centsPerETH);
+    event LogGive(address indexed owner, uint256 value, string reason);
+    event LogMigrate(address indexed owner, uint256 value);
     event LogPhaseSwitch(Phase newPhase);
     
     ///Presale-specific functions
@@ -373,14 +392,14 @@ contract PresaleToken is TickerController {
         require(msg.value != 0);
         require(priceTicker.getEnabled());
         
-        var centsPerETH = getCentsPerETH();
+        uint256 centsPerETH = getCentsPerETH();
         require(centsPerETH != 0);
         
-        var newTokens = msg.value.mul(centsPerETH).mul(uint(10)**decimals).div(priceCents.mul(1 ether / 1 wei));
+        uint256 newTokens = msg.value.mul(centsPerETH).mul(uint256(10)**decimals).div(priceCents.mul(1 ether / 1 wei));
         assert(newTokens != 0);
         
         if (funded.add(newTokens) > maxSupply) {
-            var remainder = maxSupply.sub(funded);
+            uint256 remainder = maxSupply.sub(funded);
             token.transfer(_buyer, remainder);
             funded = funded.add(remainder);
             lastBuyer = _buyer;
@@ -390,6 +409,42 @@ contract PresaleToken is TickerController {
         else {
             token.transfer(_buyer, newTokens);
             funded = funded.add(newTokens);
+            LogBuy(_buyer, newTokens, centsPerETH);
+        }
+        
+        if (funded == maxSupply) {
+            lastCentsPerETH = centsPerETH;
+            currentPhase = Phase.Finished;
+            LogPhaseSwitch(Phase.Finished);
+        }
+    }
+    
+    function buyThroughProxy(address _buyer) payable
+        onlyProxy
+        onlyWhileRunning
+    {
+        require(msg.value != 0);
+        require(priceTicker.getEnabled());
+        
+        uint256 centsPerETH = getCentsPerETH();
+        require(centsPerETH != 0);
+        
+        uint256 newTokens = msg.value.mul(centsPerETH).mul(uint256(10)**decimals).div(priceCents.mul(1 ether / 1 wei));
+        assert(newTokens != 0);
+        
+        if (funded.add(newTokens) > maxSupply) {
+            uint256 remainder = maxSupply.sub(funded);
+            token.transfer(_buyer, remainder);
+            funded = funded.add(remainder);
+            fundedProxy = fundedProxy.add(remainder);
+            lastBuyer = _buyer;
+            refundValue = newTokens.sub(remainder);
+            LogBuy(_buyer, remainder, centsPerETH);
+        }
+        else {
+            token.transfer(_buyer, newTokens);
+            funded = funded.add(newTokens);
+            fundedProxy = fundedProxy.add(newTokens);
             LogBuy(_buyer, newTokens, centsPerETH);
         }
         
@@ -439,7 +494,7 @@ contract PresaleToken is TickerController {
         onlyWhileFinished
     {   
         if (refundValue != 0) {
-            lastBuyer.transfer((refundValue.mul(priceCents).mul(1 ether / 1 wei)).div(lastCentsPerETH.mul(uint(10)**decimals)));
+            lastBuyer.transfer((refundValue.mul(priceCents).mul(1 ether / 1 wei)).div(lastCentsPerETH.mul(uint256(10)**decimals)));
         }
         withdrawEther();
         currentPhase = Phase.Finalized;
