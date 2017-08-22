@@ -51,7 +51,7 @@ contract Freezable is Ownable {
     
     bool frozen = false;
     
-    modifier whileNotFrozen {assert(frozen == true); _;}
+    modifier whileNotFrozen {assert(frozen != true); _;}
     
     function freeze() onlyOwner {
         frozen = true;
