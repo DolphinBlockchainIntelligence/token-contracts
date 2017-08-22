@@ -189,6 +189,7 @@ contract PresaleToken {
     
     //Presale events
     event LogBuy(address indexed owner, uint value, uint centsPerETH);
+    event LogGive(address indexed owner, uint value, string reason);
     event LogMigrate(address indexed owner, uint value);
     event LogPhaseSwitch(Phase newPhase);
     
@@ -365,7 +366,7 @@ contract PresaleToken {
         LogPhaseSwitch(Phase.Running);
     }
     
-    function giveTokens(address _address, uint _value) 
+    function giveTokens(address _address, uint _value, string _reason) 
         onlyTokenManager
         onlyBeforeMigration
         
@@ -373,6 +374,7 @@ contract PresaleToken {
         balance[_address] = balance[_address].add(_value);
         supply = supply.add(_value);
         givenSupply = givenSupply.add(_value);
+        LogGive(_address, _value, _reason);
     }
     
     ///Ticker interaction functions
