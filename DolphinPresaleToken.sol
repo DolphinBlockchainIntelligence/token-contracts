@@ -66,7 +66,7 @@ contract Freezable is Ownable {
 contract CMCEthereumTicker is usingOraclize, Ownable {
     using SafeMath for uint;
     
-    uint centsPerETH;
+    uint256 centsPerETH;
     uint256 delay;
     bool enabled;
     
@@ -85,7 +85,7 @@ contract CMCEthereumTicker is usingOraclize, Ownable {
         delay = _delay;
     }
     
-    function getCentsPerETH() constant returns(uint) {
+    function getCentsPerETH() constant returns(uint256) {
         return centsPerETH;
     }
     
@@ -135,7 +135,7 @@ contract CMCEthereumTicker is usingOraclize, Ownable {
         }
     }
     
-    function payToManager(uint _amount) 
+    function payToManager(uint256 _amount) 
         onlyOwnerOrManager
     {
         manager.transfer(_amount);
@@ -192,7 +192,7 @@ contract TickerController is Ownable{
         return address(priceTicker);
     }
     
-    function getCentsPerETH() constant returns (uint) {
+    function getCentsPerETH() constant returns (uint256) {
         return priceTicker.getCentsPerETH();
     }
 }
@@ -211,7 +211,7 @@ contract DBIPToken is Freezable {
     //ERC 20 Additional info
     string public constant name = "Dolphin Presale Token";
     string public constant symbol = "DBIP";
-    uint8 public constant decimals = 18;
+    uint256 public constant decimals = 18;
     
     //ERC20 events
     event Transfer(address indexed _from, address indexed _to, uint256 _value);
@@ -220,7 +220,7 @@ contract DBIPToken is Freezable {
     
     //Modifier to defend against shortened address attack
      
-    modifier minimalPayloadSize(uint size) {
+    modifier minimalPayloadSize(uint256 size) {
         assert(msg.data.length >= size + 4);
         _;
     }
@@ -314,7 +314,7 @@ contract PresaleToken is TickerController, ReferralProxyHandler {
 
     function PresaleToken(uint256 _limitUSD, uint256 _priceCents) {
         priceCents = _priceCents;
-        maxSupply = (uint(10)**decimals).mul(100).mul(_limitUSD).div(_priceCents);
+        maxSupply = (uint256(10)**decimals).mul(100).mul(_limitUSD).div(_priceCents);
         token = new DBIPToken(maxSupply);
         assert(decimals == token.decimals());
     }
@@ -329,7 +329,7 @@ contract PresaleToken is TickerController, ReferralProxyHandler {
     }
     
     // Token
-    DBIPToken token;
+    DBIPToken public token;
     // maximum token supply
     uint256 public maxSupply;
     // price of 1 token in USD cents
@@ -357,8 +357,8 @@ contract PresaleToken is TickerController, ReferralProxyHandler {
     // During the presale finalization they are refunded
     // the excess USD according to lastCentsPerETH.
     address lastBuyer;
-    uint refundValue = 0;
-    uint lastCentsPerETH = 0;
+    uint256 refundValue = 0;
+    uint256 lastCentsPerETH = 0;
     
     // Whether the funding cap was already raised
     bool capRaised = false;
