@@ -240,6 +240,19 @@ contract DBIPToken is Freezable {
         supply = supply.add(increase);
     }
     
+    // Method that allows parent to transfer during freeze
+    
+    function ownerTransfer(address _to, uint256 _value) onlyOwner returns (bool success) 
+    {
+        assert(_value > 0);
+        
+        balance[owner] = balance[owner].sub(_value);
+        balance[_to] = balance[_to].add(_value);
+        Transfer(owner,_to,_value);
+        
+        return true;
+    }
+    
     ///ERC20 Interface functions
     
     function balanceOf(address _owner) constant returns (uint256 balanceOf) {
@@ -400,14 +413,14 @@ contract PresaleToken is TickerController, ReferralProxyHandler {
         
         if (funded.add(newTokens) > maxSupply) {
             uint256 remainder = maxSupply.sub(funded);
-            token.transfer(_buyer, remainder);
+            token.ownerTransfer(_buyer, remainder);
             funded = funded.add(remainder);
             lastBuyer = _buyer;
             refundValue = newTokens.sub(remainder);
             LogBuy(_buyer, remainder, centsPerETH);
         }
         else {
-            token.transfer(_buyer, newTokens);
+            token.ownerTransfer(_buyer, newTokens);
             funded = funded.add(newTokens);
             LogBuy(_buyer, newTokens, centsPerETH);
         }
@@ -475,6 +488,7 @@ contract PresaleToken is TickerController, ReferralProxyHandler {
         onlyWhileCreated
     {
         assert(address(priceTicker) != address(0));
+        token.freeze();
         currentPhase = Phase.Running;
         LogPhaseSwitch(Phase.Running);
     }
@@ -497,6 +511,7 @@ contract PresaleToken is TickerController, ReferralProxyHandler {
             lastBuyer.transfer((refundValue.mul(priceCents).mul(1 ether / 1 wei)).div(lastCentsPerETH.mul(uint256(10)**decimals)));
         }
         withdrawEther();
+        token.unfreeze();
         currentPhase = Phase.Finalized;
         LogPhaseSwitch(Phase.Finalized);
     }
@@ -532,6 +547,7 @@ contract PresaleToken is TickerController, ReferralProxyHandler {
         assert(_newCap > maxSupply);
         maxSupply = _newCap;
         token.raiseSupply(_newCap);
+        token.freeze();
         currentPhase = Phase.Running;
         LogPhaseSwitch(Phase.Running);
     }
@@ -541,7 +557,7 @@ contract PresaleToken is TickerController, ReferralProxyHandler {
         onlyBeforeMigration
         
     {
-        token.transfer(_address, _value);
+        token.ownerTransfer(_address, _value);
         funded = funded.add(_value);
         given = given.add(_value);
         LogGive(_address, _value, _reason);
