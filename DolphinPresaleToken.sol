@@ -362,9 +362,6 @@ contract PresaleToken is TickerController, ReferralProxyHandler {
     // Migration manager has privileges to burn tokens during migration.
     address public migrationManager;
     
-    // Used to check whether the address has already migrated
-    mapping (address => bool) migrated;
-    
     // The last buyer is the buyer that purchased
     // tokens that add up to the maxSupply or more.
     // During the presale finalization they are refunded
@@ -476,7 +473,6 @@ contract PresaleToken is TickerController, ReferralProxyHandler {
         var migratedValue = token.balanceOf(_owner);
         funded = funded.sub(migratedValue);
         LogMigrate(_owner, migratedValue);
-        migrated[_owner] = true;
         if(funded == 0) {
             currentPhase = Phase.Migrated;
             LogPhaseSwitch(Phase.Migrated);
