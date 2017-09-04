@@ -13,11 +13,11 @@ contract ReferralProxy {
     }
     
     function () payable {
-        presaleContract.buyThroughProxy(msg.sender);
+        presaleContract.buyThroughProxy.value(msg.value)(msg.sender);
     }
     
     function buyTokens(address _buyer) payable {
-        presaleContract.buyThroughProxy(_buyer);
+        presaleContract.buyThroughProxy.value(msg.value)(_buyer);
     }
     
 }
