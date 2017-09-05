@@ -537,13 +537,16 @@ contract PresaleToken is TickerController, ReferralProxyHandler {
     
     function raiseCap(uint _newCap)
         onlyOwner
-        onlyWhileFinalized
+        onlyWhileFinished
     {
         assert(!capRaised);
         assert(_newCap > maxSupply);
         maxSupply = _newCap;
         token.raiseSupply(_newCap);
-        token.freeze();
+        if (refundValue != 0) {
+           token.ownerTransfer(lastBuyer, refundValue);
+           refundValue = 0;
+        }
         currentPhase = Phase.Running;
         LogPhaseSwitch(Phase.Running);
     }
