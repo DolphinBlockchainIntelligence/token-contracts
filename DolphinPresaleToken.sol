@@ -548,6 +548,7 @@ contract PresaleToken is TickerController, ReferralProxyHandler, Freezable {
         token.raiseSupply(_newCap);
         if (refundValue != 0) {
            token.ownerTransfer(lastBuyer, refundValue);
+           funded = funded.add(refundValue);
            refundValue = 0;
         }
         currentPhase = Phase.Running;
