@@ -145,7 +145,7 @@ contract CMCEthereumTicker is usingOraclize, Ownable {
     
 }
 
-contract TickerController is Ownable{
+contract TickerController is Ownable {
     
     //Ticker contract
     CMCEthereumTicker priceTicker;
@@ -303,7 +303,7 @@ contract DBIPToken is Freezable {
     
 }
 
-contract ReferralProxyHandler is Ownable{
+contract ReferralProxyHandler is Ownable {
     
     // Proxy is a contract throught which referral investors buy tokens
     address public proxy;
@@ -322,7 +322,7 @@ contract ReferralProxyHandler is Ownable{
     
 }
 
-contract PresaleToken is TickerController, ReferralProxyHandler {
+contract PresaleToken is TickerController, ReferralProxyHandler, Freezable {
     using SafeMath for uint256;
 
     function PresaleToken(uint256 _limitUSD, uint256 _priceCents) {
@@ -397,6 +397,7 @@ contract PresaleToken is TickerController, ReferralProxyHandler {
     }
 
     function buyTokens(address _buyer) payable
+        whileNotFrozen
         onlyWhileRunning
     {
         require(msg.value != 0);
@@ -430,6 +431,7 @@ contract PresaleToken is TickerController, ReferralProxyHandler {
     }
     
     function buyThroughProxy(address _buyer) payable
+        whileNotFrozen
         onlyProxy
         onlyWhileRunning
     {
@@ -536,6 +538,7 @@ contract PresaleToken is TickerController, ReferralProxyHandler {
     }
     
     function raiseCap(uint _newCap)
+        whileNotFrozen
         onlyOwner
         onlyWhileFinished
     {
@@ -551,10 +554,10 @@ contract PresaleToken is TickerController, ReferralProxyHandler {
         LogPhaseSwitch(Phase.Running);
     }
     
-    function giveTokens(address _address, uint _value, string _reason) 
+    function giveTokens(address _address, uint _value, string _reason)
+        whileNotFrozen
         onlyOwner
         onlyBeforeMigration
-        
     {
         token.ownerTransfer(_address, _value);
         funded = funded.add(_value);
