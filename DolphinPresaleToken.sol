@@ -554,7 +554,7 @@ contract PresaleToken is TickerController, ReferralProxyHandler, Freezable {
         currentPhase = Phase.Running;
         LogPhaseSwitch(Phase.Running);
     }
-    
+
     function giveTokens(address _address, uint _value, string _reason)
         whileNotFrozen
         onlyOwner
