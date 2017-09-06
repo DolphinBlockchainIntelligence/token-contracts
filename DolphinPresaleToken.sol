@@ -117,7 +117,7 @@ contract CMCEthereumTicker is usingOraclize, Ownable {
         }
     }
     
-    function update_instant() payable {
+    function update_instant() private payable {
         if (oraclize.getPrice("URL") > this.balance) {
             newOraclizeQuery("Oraclize query was NOT sent, please add some ETH to cover for the query fee");
         } else {
@@ -126,7 +126,7 @@ contract CMCEthereumTicker is usingOraclize, Ownable {
         }
     }
     
-    function update() payable {
+    function update() private payable {
         if (oraclize.getPrice("URL") > this.balance) {
             newOraclizeQuery("Oraclize query was NOT sent, please add some ETH to cover for the query fee");
         } else {
